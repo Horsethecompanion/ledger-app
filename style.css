@@ -290,6 +290,11 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   gap: 6px;
 }
 .tag-chip button { color: var(--clay); font-size: 12px; line-height: 1; }
+.tag-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 #tag-input {
   border: none;
   background: none;
@@ -299,6 +304,15 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   min-width: 120px;
   padding: 3px 4px;
 }
+.tag-add-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--teal);
+  padding: 3px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+}
+.tag-add-btn:hover { background: var(--clay-soft); }
 
 .note-body {
   flex: 1;

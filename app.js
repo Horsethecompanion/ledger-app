@@ -118,24 +118,37 @@ function ghHeaders() {
 }
 
 async function fullSync() {
-  setSyncStatus("syncing…");
-  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/zipball/${config.branch}`;
-  const res = await fetch(url, { headers: ghHeaders() });
-  if (!res.ok) throw new Error("Full sync failed: " + res.status);
-  const blob = await res.blob();
-  const zip = await JSZip.loadAsync(blob);
-
+  setSyncStatus("syncing 0%…");
   const shaMap = await fetchTreeShas();
+  const mdPaths = Object.keys(shaMap).filter((p) => p.endsWith(".md"));
+
   const notes = {};
-  const fileNames = Object.keys(zip.files);
-  for (const name of fileNames) {
-    if (!name.endsWith(".md")) continue;
-    // zipball wraps everything in a single top-level folder; strip it
-    const relPath = name.split("/").slice(1).join("/");
-    if (!relPath || relPath.includes("/")) continue; // vault is flat (notes at root)
-    const content = await zip.files[name].async("string");
-    notes[relPath] = { sha: shaMap[relPath] || null, content };
+  const CONCURRENCY = 12;
+  let done = 0;
+
+  async function fetchOne(path) {
+    const sha = shaMap[path];
+    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/git/blobs/${sha}`;
+    const res = await fetch(url, { headers: ghHeaders() });
+    if (res.ok) {
+      const data = await res.json();
+      notes[path] = { sha, content: b64DecodeUnicode(data.content) };
+    }
+    done++;
+    if (done % 20 === 0 || done === mdPaths.length) {
+      setSyncStatus(`syncing ${Math.round((done / mdPaths.length) * 100)}%…`);
+    }
   }
+
+  const queue = [...mdPaths];
+  async function worker() {
+    while (queue.length) {
+      const path = queue.shift();
+      await fetchOne(path);
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
   cache = { notes, lastSync: new Date().toISOString() };
   saveCache();
   setSyncStatus("synced");
@@ -493,14 +506,22 @@ function renderTagChips() {
 }
 
 document.getElementById("tag-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && e.target.value.trim()) {
+  if (e.key === "Enter" || e.keyCode === 13) {
     e.preventDefault();
-    currentTags.push(e.target.value.trim());
-    e.target.value = "";
-    renderTagChips();
-    markDirty();
+    addTagFromInput();
   }
 });
+document.getElementById("tag-add-btn").addEventListener("click", addTagFromInput);
+
+function addTagFromInput() {
+  const input = document.getElementById("tag-input");
+  const value = input.value.trim();
+  if (!value) return;
+  currentTags.push(value);
+  input.value = "";
+  renderTagChips();
+  markDirty();
+}
 
 // -- Formatting toolbar (simple execCommand-based; matches "very basic" ask) --
 
