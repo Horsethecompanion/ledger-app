@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Ledger</title>
+<meta name="theme-color" content="#EFEDE6">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%232F5D50'/%3E%3Ctext x='50' y='68' font-size='60' text-anchor='middle' fill='%23EFEDE6' font-family='Georgia,serif'%3EL%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%232F5D50'/%3E%3Ctext x='50' y='68' font-size='60' text-anchor='middle' fill='%23EFEDE6' font-family='Georgia,serif'%3EL%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== Setup screen (first run: connect to GitHub) ===== -->
+  <section id="setup-screen" class="screen">
+    <div class="setup-card">
+      <h1 class="brand">Ledger</h1>
+      <p class="subtitle">A quiet place for notes, kept as plain files in your own vault.</p>
+
+      <form id="setup-form">
+        <label>
+          <span>GitHub username</span>
+          <input type="text" id="setup-owner" placeholder="e.g. Horsethecompanion" required autocomplete="off">
+        </label>
+        <label>
+          <span>Repository name</span>
+          <input type="text" id="setup-repo" placeholder="e.g. notes-vault" required autocomplete="off">
+        </label>
+        <label>
+          <span>Branch</span>
+          <input type="text" id="setup-branch" placeholder="main" value="main" autocomplete="off">
+        </label>
+        <label>
+          <span>Personal access token</span>
+          <input type="password" id="setup-token" placeholder="github_pat_..." required autocomplete="off">
+        </label>
+        <p class="setup-hint">Scoped to this one repo, Contents: Read and write. Nothing else needed. Stored only on this device.</p>
+        <button type="submit" class="btn-primary">Connect</button>
+      </form>
+      <p id="setup-error" class="error-text" hidden></p>
+    </div>
+  </section>
+
+  <!-- ===== Main app (index + editor) ===== -->
+  <section id="main-screen" class="screen" hidden>
+
+    <header class="topbar">
+      <h1 class="brand">Ledger</h1>
+      <div class="topbar-status">
+        <span id="sync-status" class="sync-status">synced</span>
+        <button id="new-note-btn" class="btn-icon" title="New note">＋</button>
+        <button id="download-btn" class="btn-icon" title="Download vault as zip">⇩</button>
+        <button id="settings-btn" class="btn-icon" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <!-- Index view -->
+    <div id="index-view" class="view">
+      <div class="index-controls">
+        <input type="search" id="search-input" placeholder='Search notes… try wildcards (hous*), "exact phrase", +required' autocomplete="off">
+        <div class="sort-controls">
+          <label><input type="radio" name="sort" value="modified" checked> Last modified</label>
+          <label><input type="radio" name="sort" value="created"> Created</label>
+          <label><input type="radio" name="sort" value="name"> Name</label>
+        </div>
+        <div id="tag-filter-bar" class="tag-filter-bar"></div>
+      </div>
+      <div id="note-list" class="note-list"></div>
+      <p id="index-empty" class="empty-state" hidden>No notes yet. Tap ＋ to write your first one.</p>
+      <p id="index-loading" class="empty-state">Loading vault…</p>
+    </div>
+
+    <!-- Editor view -->
+    <div id="editor-view" class="view" hidden>
+      <div class="editor-toolbar">
+        <button id="back-btn" class="btn-icon" title="Back to index">←</button>
+        <button id="bold-btn" class="fmt-btn" title="Bold"><b>B</b></button>
+        <button id="italic-btn" class="fmt-btn" title="Italic"><i>I</i></button>
+        <button id="bullet-btn" class="fmt-btn" title="Bullet list">•—</button>
+        <button id="image-btn" class="fmt-btn" title="Insert image">🖼</button>
+        <input type="file" id="image-input" accept="image/*" hidden>
+        <span class="toolbar-spacer"></span>
+        <span id="save-indicator" class="save-indicator"></span>
+      </div>
+
+      <input type="text" id="note-title" class="note-title-input" placeholder="Untitled">
+      <div class="note-meta">
+        <span id="note-date" class="note-date"></span>
+        <span id="note-wordcount" class="note-wordcount"></span>
+      </div>
+
+      <div id="tag-editor" class="tag-editor">
+        <div id="tag-chips" class="tag-chips"></div>
+        <input type="text" id="tag-input" placeholder="add a tag, press enter">
+      </div>
+
+      <div id="note-body" class="note-body" contenteditable="true" spellcheck="true"></div>
+
+      <div id="backlink-autocomplete" class="backlink-autocomplete" hidden></div>
+    </div>
+
+  </section>
+
+  <!-- Offline banner -->
+  <div id="offline-banner" class="offline-banner" hidden>You're offline. Changes are saved locally and will sync when you're back.</div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
