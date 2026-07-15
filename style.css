@@ -29,6 +29,7 @@ html, body {
 #app { min-height: 100vh; display: flex; flex-direction: column; }
 
 .screen { flex: 1; display: flex; flex-direction: column; }
+.screen[hidden] { display: none; }
 
 button {
   font-family: var(--sans);
@@ -133,6 +134,7 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
 
 /* ===== Index view ===== */
 .view { flex: 1; display: flex; flex-direction: column; }
+.view[hidden] { display: none; }
 .index-controls {
   padding: 16px 20px 8px;
   display: flex;
