@@ -3,7 +3,7 @@
 // Note content itself is cached separately in IndexedDB by app.js, not here -
 // that data needs richer read/write logic than a service worker cache handles well.
 
-const CACHE_NAME = "ledger-shell-v1";
+const CACHE_NAME = "ledger-shell-v2";
 const SHELL_FILES = [
   "./index.html",
   "./style.css",
@@ -38,10 +38,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // App shell: cache-first, so the UI itself always opens instantly.
+  // App shell: network-first, so you always get the latest code when online;
+  // falls back to cache only if the network is unreachable (offline use).
   if (SHELL_FILES.some((f) => event.request.url.endsWith(f.replace("./", "")))) {
     event.respondWith(
-      caches.match(event.request).then((cached) => cached || fetch(event.request))
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
     );
     return;
   }

@@ -128,11 +128,18 @@ async function fullSync() {
 
   async function fetchOne(path) {
     const sha = shaMap[path];
-    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/git/blobs/${sha}`;
-    const res = await fetch(url, { headers: ghHeaders() });
-    if (res.ok) {
-      const data = await res.json();
-      notes[path] = { sha, content: b64DecodeUnicode(data.content) };
+    try {
+      const url = `https://api.github.com/repos/${config.owner}/${config.repo}/git/blobs/${sha}`;
+      const res = await fetch(url, { headers: ghHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        notes[path] = { sha, content: b64DecodeUnicode(data.content) };
+      } else {
+        console.error(`Failed to fetch ${path}: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.error(`Failed to fetch/decode ${path}:`, err);
+      // Deliberately swallow: one bad file shouldn't abort the sync for the other 897.
     }
     done++;
     if (done % 20 === 0 || done === mdPaths.length) {
@@ -181,8 +188,12 @@ async function incrementalSync() {
       if (!shaMap[path]) delete cache.notes[path];
     }
     for (const path of changedPaths) {
-      const file = await fetchFile(path);
-      if (file) cache.notes[path] = { sha: file.sha, content: file.content };
+      try {
+        const file = await fetchFile(path);
+        if (file) cache.notes[path] = { sha: file.sha, content: file.content };
+      } catch (err) {
+        console.error(`Incremental sync: failed to fetch ${path}:`, err);
+      }
     }
     cache.lastSync = new Date().toISOString();
     saveCache();
@@ -511,7 +522,11 @@ document.getElementById("tag-input").addEventListener("keydown", (e) => {
     addTagFromInput();
   }
 });
-document.getElementById("tag-add-btn").addEventListener("click", addTagFromInput);
+document.getElementById("tag-add-btn").addEventListener("click", (e) => {
+  e.preventDefault();
+  addTagFromInput();
+  document.getElementById("tag-input").focus();
+});
 
 function addTagFromInput() {
   const input = document.getElementById("tag-input");
@@ -802,12 +817,16 @@ function htmlToMarkdown(html) {
 // ---------- Base64 helpers (unicode-safe) ----------
 
 function b64EncodeUnicode(str) {
-  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => String.fromCharCode("0x" + p1)));
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
 }
-function b64DecodeUnicode(str) {
-  return decodeURIComponent(atob(str.replace(/\n/g, "")).split("").map((c) =>
-    "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)
-  ).join(""));
+function b64DecodeUnicode(base64) {
+  const binary = atob(base64.replace(/\n/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
 // ---------- Settings / download ----------
