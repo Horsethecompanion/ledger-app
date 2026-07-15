@@ -140,6 +140,10 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: sticky;
+  top: 57px; /* sits directly below the sticky topbar, not on top of it */
+  z-index: 9;
+  background: var(--paper);
 }
 #search-input {
   padding: 10px 14px;
