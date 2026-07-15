@@ -742,14 +742,25 @@ async function putFile(path, base64Content, sha) {
 // ---------- Very small markdown <-> HTML conversion (bold/italic/bullets/images/wikilinks only) ----------
 
 function markdownToHtml(md) {
-  const lines = md.split("\n");
+  // Pull out image markdown first, across the whole text - alt text can
+  // legitimately span many lines (e.g. long OCR text OneNote attaches to
+  // pasted images), so a single-line regex would miss these entirely.
+  const images = [];
+  const withPlaceholders = md.replace(/!\[([\s\S]*?)\]\(([^)\n]+)\)/g, (_, alt, src) => {
+    const token = `\u0000IMG${images.length}\u0000`;
+    images.push({ alt: alt.replace(/\n/g, " ").trim(), src });
+    return token;
+  });
+
+  const lines = withPlaceholders.split("\n");
   let html = "";
   let inList = false;
   for (const line of lines) {
-    const imgMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)/);
-    if (imgMatch) {
+    const placeholderMatch = line.match(/^\u0000IMG(\d+)\u0000$/);
+    if (placeholderMatch) {
       if (inList) { html += "</ul>"; inList = false; }
-      html += `<img src="${imgMatch[2]}" alt="${escapeHtml(imgMatch[1])}" data-relpath="${imgMatch[2]}">`;
+      const img = images[Number(placeholderMatch[1])];
+      html += `<img src="${img.src}" alt="${escapeHtml(img.alt)}" data-relpath="${img.src}">`;
       continue;
     }
     if (line.startsWith("- ")) {
