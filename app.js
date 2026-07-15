@@ -156,7 +156,7 @@ async function fullSync() {
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-  cache = { notes, lastSync: new Date().toISOString() };
+  cache = { notes, shaMap, lastSync: new Date().toISOString() };
   saveCache();
   setSyncStatus("synced");
 }
@@ -195,6 +195,7 @@ async function incrementalSync() {
         console.error(`Incremental sync: failed to fetch ${path}:`, err);
       }
     }
+    cache.shaMap = shaMap;
     cache.lastSync = new Date().toISOString();
     saveCache();
     setSyncStatus("synced");
@@ -212,7 +213,21 @@ async function fetchFile(path) {
 }
 
 async function fetchFileRawBase64(path) {
-  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${encodeURIComponent(path)}?ref=${config.branch}`;
+  // Contents API silently returns no data for files over ~1MB (common for
+  // photos), so fetch by blob sha instead - that endpoint supports up to 100MB.
+  let sha = cache.shaMap && cache.shaMap[path];
+  if (!sha) {
+    // Not in our cached tree yet (e.g. very recently added) - look it up fresh.
+    const freshMap = await fetchTreeShas();
+    sha = freshMap[path];
+    if (sha) {
+      cache.shaMap = freshMap;
+      saveCache();
+    }
+  }
+  if (!sha) return null;
+
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/git/blobs/${sha}`;
   const res = await fetch(url, { headers: ghHeaders() });
   if (!res.ok) return null;
   const data = await res.json();
