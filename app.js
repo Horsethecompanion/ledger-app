@@ -453,7 +453,6 @@ function renderIndex() {
     row.onclick = () => openNote(entry.path);
 
     const wc = entry.wc;
-    const isLong = wc >= 500;
     const isFav = entry.tags.includes(FAVORITE_TAG);
     const isArchived = entry.tags.includes(ARCHIVE_TAG);
     const visibleTags = entry.tags.filter((t) => t !== FAVORITE_TAG && t !== ARCHIVE_TAG);
@@ -470,10 +469,7 @@ function renderIndex() {
         <button class="row-action-btn favorite-toggle" title="Toggle favorite">${isFav ? "★" : "☆"}</button>
         <button class="row-action-btn archive-toggle" title="Toggle archive">🗄</button>
       </div>
-      <div class="note-row-meta">
-        ${wc} words
-        ${isLong ? '<span class="essay-flag">● long-form</span>' : ""}
-      </div>
+      <div class="note-row-meta">${wc}</div>
     `;
     row.querySelector(".favorite-toggle").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -601,17 +597,6 @@ function openNote(path, isNew = false) {
   dirty = false;
   clearIdleTimer();
   loadInlineImages();
-  updateFavoriteArchiveButtons();
-}
-
-function updateFavoriteArchiveButtons() {
-  const favBtn = document.getElementById("favorite-btn");
-  const archiveBtn = document.getElementById("archive-btn");
-  const isFav = currentTags.includes(FAVORITE_TAG);
-  const isArchived = currentTags.includes(ARCHIVE_TAG);
-  favBtn.textContent = isFav ? "★" : "☆";
-  favBtn.classList.toggle("active-state", isFav);
-  archiveBtn.classList.toggle("active-state", isArchived);
 }
 
 async function loadInlineImages() {
@@ -667,11 +652,6 @@ document.getElementById("tag-input").addEventListener("keydown", (e) => {
     addTagFromInput();
   }
 });
-document.getElementById("tag-add-btn").addEventListener("click", (e) => {
-  e.preventDefault();
-  addTagFromInput();
-  document.getElementById("tag-input").focus();
-});
 
 function addTagFromInput() {
   const input = document.getElementById("tag-input");
@@ -688,24 +668,6 @@ function addTagFromInput() {
 document.getElementById("bold-btn").addEventListener("click", () => { document.execCommand("bold"); markDirty(); });
 document.getElementById("italic-btn").addEventListener("click", () => { document.execCommand("italic"); markDirty(); });
 document.getElementById("bullet-btn").addEventListener("click", () => { document.execCommand("insertUnorderedList"); markDirty(); });
-
-document.getElementById("favorite-btn").addEventListener("click", () => {
-  const has = currentTags.includes(FAVORITE_TAG);
-  currentTags = has ? currentTags.filter((t) => t !== FAVORITE_TAG) : [...currentTags, FAVORITE_TAG];
-  updateFavoriteArchiveButtons();
-  markDirty();
-});
-document.getElementById("archive-btn").addEventListener("click", () => {
-  const has = currentTags.includes(ARCHIVE_TAG);
-  currentTags = has ? currentTags.filter((t) => t !== ARCHIVE_TAG) : [...currentTags, ARCHIVE_TAG];
-  updateFavoriteArchiveButtons();
-  markDirty();
-});
-
-document.getElementById("save-now-btn").addEventListener("click", () => {
-  dirty = true; // force through even if nothing changed since last idle-check
-  saveCurrentNoteIfDirty();
-});
 
 document.getElementById("refresh-note-btn").addEventListener("click", async () => {
   if (!currentPath) return;

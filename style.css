@@ -246,11 +246,6 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.note-row-meta .essay-flag {
-  display: inline-block;
-  margin-top: 4px;
-  color: var(--teal);
-}
 .note-row-badges { display: inline-flex; gap: 4px; }
 .note-row-badges .favorited { color: var(--teal); }
 .note-row-badges .archived-badge { color: var(--ink-soft); }
@@ -281,6 +276,9 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   border-radius: 3px;
   color: var(--ink);
   font-family: var(--serif);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .fmt-btn:hover { background: var(--clay-soft); }
 .fmt-btn.active-state { background: var(--clay-soft); color: var(--teal); }
@@ -330,11 +328,6 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   gap: 6px;
 }
 .tag-chip button { color: var(--clay); font-size: 12px; line-height: 1; }
-.tag-input-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 #tag-input {
   border: none;
   background: none;
@@ -344,15 +337,6 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   min-width: 120px;
   padding: 3px 4px;
 }
-.tag-add-btn {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--teal);
-  padding: 3px 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 20px;
-}
-.tag-add-btn:hover { background: var(--clay-soft); }
 
 .note-body {
   flex: 1;

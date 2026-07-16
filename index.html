@@ -86,14 +86,13 @@
         <button id="bold-btn" class="fmt-btn" title="Bold"><b>B</b></button>
         <button id="italic-btn" class="fmt-btn" title="Italic"><i>I</i></button>
         <button id="bullet-btn" class="fmt-btn" title="Bullet list">•—</button>
-        <button id="image-btn" class="fmt-btn" title="Insert image">🖼</button>
+        <button id="image-btn" class="fmt-btn" title="Insert image">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </button>
         <input type="file" id="image-input" accept="image/*" hidden>
-        <button id="favorite-btn" class="fmt-btn" title="Favorite">☆</button>
-        <button id="archive-btn" class="fmt-btn" title="Archive">🗄</button>
         <button id="refresh-note-btn" class="fmt-btn" title="Refresh this note from the vault">⟳</button>
         <span class="toolbar-spacer"></span>
         <span id="save-indicator" class="save-indicator"></span>
-        <button id="save-now-btn" class="btn-icon" title="Save now">💾</button>
       </div>
 
       <input type="text" id="note-title" class="note-title-input" placeholder="Untitled">
@@ -104,10 +103,7 @@
 
       <div id="tag-editor" class="tag-editor">
         <div id="tag-chips" class="tag-chips"></div>
-        <div class="tag-input-group">
-          <input type="text" id="tag-input" placeholder="add a tag" enterkeyhint="done">
-          <button type="button" id="tag-add-btn" class="tag-add-btn" title="Add tag">Add</button>
-        </div>
+        <input type="text" id="tag-input" placeholder="add a tag" enterkeyhint="done">
       </div>
 
       <div id="note-body" class="note-body" contenteditable="true" spellcheck="true"></div>
