@@ -55,7 +55,6 @@
       <div class="topbar-status">
         <span id="sync-status" class="sync-status">synced</span>
         <button id="new-note-btn" class="btn-icon" title="New note">＋</button>
-        <button id="download-btn" class="btn-icon" title="Download vault as zip">⇩</button>
         <button id="settings-btn" class="btn-icon" title="Settings">⚙</button>
       </div>
     </header>
@@ -63,11 +62,15 @@
     <!-- Index view -->
     <div id="index-view" class="view">
       <div class="index-controls">
-        <input type="search" id="search-input" placeholder='Search notes… try wildcards (hous*), "exact phrase", +required' autocomplete="off">
+        <div class="search-row">
+          <input type="search" id="search-input" placeholder='Search notes… try wildcards (hous*), "exact phrase", +required' autocomplete="off">
+          <button id="tag-panel-toggle" class="btn-icon" title="Show/hide tags">🏷</button>
+        </div>
         <div class="sort-controls">
           <label><input type="radio" name="sort" value="modified" checked> Last modified</label>
           <label><input type="radio" name="sort" value="created"> Created</label>
           <label><input type="radio" name="sort" value="name"> Name</label>
+          <label><input type="radio" name="sort" value="words"> Word count</label>
         </div>
         <div id="tag-filter-bar" class="tag-filter-bar"></div>
       </div>
@@ -85,8 +88,12 @@
         <button id="bullet-btn" class="fmt-btn" title="Bullet list">•—</button>
         <button id="image-btn" class="fmt-btn" title="Insert image">🖼</button>
         <input type="file" id="image-input" accept="image/*" hidden>
+        <button id="favorite-btn" class="fmt-btn" title="Favorite">☆</button>
+        <button id="archive-btn" class="fmt-btn" title="Archive">🗄</button>
+        <button id="refresh-note-btn" class="fmt-btn" title="Refresh this note from the vault">⟳</button>
         <span class="toolbar-spacer"></span>
         <span id="save-indicator" class="save-indicator"></span>
+        <button id="save-now-btn" class="btn-icon" title="Save now">💾</button>
       </div>
 
       <input type="text" id="note-title" class="note-title-input" placeholder="Untitled">
@@ -112,6 +119,41 @@
 
   <!-- Offline banner -->
   <div id="offline-banner" class="offline-banner" hidden>You're offline. Changes are saved locally and will sync when you're back.</div>
+
+  <!-- Settings modal -->
+  <div id="settings-modal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2 class="modal-title">Settings</h2>
+
+      <label class="settings-row">
+        <span>Dark mode</span>
+        <input type="checkbox" id="setting-dark-mode">
+      </label>
+
+      <label class="settings-row">
+        <span>Show archived notes</span>
+        <input type="checkbox" id="setting-show-archived">
+      </label>
+
+      <label class="settings-row">
+        <span>Autosave after idle</span>
+        <select id="setting-autosave-interval">
+          <option value="15000">15 seconds</option>
+          <option value="30000">30 seconds</option>
+          <option value="60000" selected>60 seconds</option>
+          <option value="120000">2 minutes</option>
+        </select>
+      </label>
+
+      <button id="settings-download-btn" class="btn-secondary">⇩ Download vault as zip</button>
+
+      <div class="settings-danger-zone">
+        <button id="settings-disconnect-btn" class="btn-danger">Disconnect this device</button>
+      </div>
+
+      <button id="settings-close-btn" class="btn-primary">Done</button>
+    </div>
+  </div>
 
 </div>
 

@@ -13,7 +13,7 @@
 
 const LS_CONFIG = "ledger_config";
 const LS_CACHE = "ledger_cache";
-const IDLE_SAVE_MS = 60 * 1000; // save 60s after the user stops typing
+const LS_SETTINGS = "ledger_settings";
 const AUTOCOMPLETE_MIN_CHARS = 1;
 
 let config = null;      // {owner, repo, branch, token}
@@ -22,6 +22,25 @@ let currentPath = null;
 let currentSha = null;  // sha of the note as last loaded, for stale-write checks
 let idleTimer = null;
 let dirty = false;
+let settings = { darkMode: false, showArchived: false, autosaveMs: 60000 };
+
+function loadSettings() {
+  const raw = localStorage.getItem(LS_SETTINGS);
+  if (raw) settings = { ...settings, ...JSON.parse(raw) };
+  applySettings();
+}
+function saveSettings() {
+  localStorage.setItem(LS_SETTINGS, JSON.stringify(settings));
+}
+function applySettings() {
+  document.documentElement.dataset.theme = settings.darkMode ? "dark" : "";
+  const darkCheckbox = document.getElementById("setting-dark-mode");
+  const archivedCheckbox = document.getElementById("setting-show-archived");
+  const autosaveSelect = document.getElementById("setting-autosave-interval");
+  if (darkCheckbox) darkCheckbox.checked = settings.darkMode;
+  if (archivedCheckbox) archivedCheckbox.checked = settings.showArchived;
+  if (autosaveSelect) autosaveSelect.value = String(settings.autosaveMs);
+}
 
 // ---------- Boot ----------
 
@@ -30,6 +49,7 @@ window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
   loadConfig();
+  loadSettings();
   if (config) {
     showMain();
     boot();
@@ -121,6 +141,7 @@ async function fullSync() {
   setSyncStatus("syncing 0%…");
   const shaMap = await fetchTreeShas();
   const mdPaths = Object.keys(shaMap).filter((p) => p.endsWith(".md"));
+  const syncTimestamp = Date.now();
 
   const notes = {};
   const CONCURRENCY = 12;
@@ -133,7 +154,7 @@ async function fullSync() {
       const res = await fetch(url, { headers: ghHeaders() });
       if (res.ok) {
         const data = await res.json();
-        notes[path] = { sha, content: b64DecodeUnicode(data.content) };
+        notes[path] = { sha, content: b64DecodeUnicode(data.content), localModified: syncTimestamp };
       } else {
         console.error(`Failed to fetch ${path}: HTTP ${res.status}`);
       }
@@ -190,7 +211,7 @@ async function incrementalSync() {
     for (const path of changedPaths) {
       try {
         const file = await fetchFile(path);
-        if (file) cache.notes[path] = { sha: file.sha, content: file.content };
+        if (file) cache.notes[path] = { sha: file.sha, content: file.content, localModified: Date.now() };
       } catch (err) {
         console.error(`Incremental sync: failed to fetch ${path}:`, err);
       }
@@ -277,6 +298,40 @@ function wordCount(text) {
   return (text.match(/\S+/g) || []).length;
 }
 
+const FAVORITE_TAG = "favorite";
+const ARCHIVE_TAG = "archived";
+
+// Only notes created via the app encode a real creation date in their
+// filename (YYYY-MM-DD-<epoch>.md). Legacy imported notes have no reliable
+// original creation date available - see conversation notes on this gap.
+function getCreatedTimestamp(path) {
+  const m = path.match(/^(\d{4})-(\d{2})-(\d{2})-(\d+)\.md$/);
+  if (!m) return null;
+  return Number(m[4]);
+}
+
+async function toggleNoteTag(path, tagName) {
+  const note = cache.notes[path];
+  if (!note) return;
+  const parsed = parseNote(note.content);
+  const has = parsed.tags.includes(tagName);
+  parsed.tags = has ? parsed.tags.filter((t) => t !== tagName) : [...parsed.tags, tagName];
+  const newContent = serializeNote(parsed);
+  const sha = note.sha;
+  cache.notes[path] = { ...note, content: newContent, localModified: Date.now() };
+  saveCache();
+  renderIndex();
+
+  if (!navigator.onLine) return; // local change is saved; will reconcile on next real edit/sync
+  try {
+    const result = await putFile(path, b64EncodeUnicode(newContent), sha);
+    cache.notes[path].sha = result.sha;
+    saveCache();
+  } catch (err) {
+    console.error(`Failed to sync tag toggle for ${path}:`, err);
+  }
+}
+
 // ---------- Index view ----------
 
 let currentSort = "modified";
@@ -291,6 +346,13 @@ document.querySelectorAll('input[name="sort"]').forEach((el) => {
 
 document.getElementById("search-input").addEventListener("input", () => renderIndex());
 
+let tagPanelCollapsed = localStorage.getItem("ledger_tag_panel_collapsed") === "true";
+document.getElementById("tag-panel-toggle").addEventListener("click", () => {
+  tagPanelCollapsed = !tagPanelCollapsed;
+  localStorage.setItem("ledger_tag_panel_collapsed", String(tagPanelCollapsed));
+  document.getElementById("tag-filter-bar").classList.toggle("collapsed", tagPanelCollapsed);
+});
+
 function getAllTags() {
   const tags = new Set();
   for (const note of Object.values(cache.notes)) {
@@ -302,8 +364,19 @@ function getAllTags() {
 
 function renderTagFilterBar() {
   const bar = document.getElementById("tag-filter-bar");
-  const tags = getAllTags();
+  bar.classList.toggle("collapsed", tagPanelCollapsed);
+  const tags = getAllTags().filter((t) => t !== FAVORITE_TAG && t !== ARCHIVE_TAG);
   bar.innerHTML = "";
+
+  const favPill = document.createElement("button");
+  favPill.className = "tag-pill favorites-pill" + (activeTagFilter === FAVORITE_TAG ? " active" : "");
+  favPill.textContent = "★ Favorites";
+  favPill.onclick = () => {
+    activeTagFilter = activeTagFilter === FAVORITE_TAG ? null : FAVORITE_TAG;
+    renderIndex();
+  };
+  bar.appendChild(favPill);
+
   tags.forEach((tag) => {
     const pill = document.createElement("button");
     pill.className = "tag-pill" + (activeTagFilter === tag ? " active" : "");
@@ -323,8 +396,18 @@ function renderIndex() {
   const query = document.getElementById("search-input").value.trim();
   let entries = Object.entries(cache.notes).map(([path, note]) => {
     const parsed = parseNote(note.content);
-    return { path, ...parsed, raw: note.content };
+    return {
+      path,
+      ...parsed,
+      raw: note.content,
+      localModified: note.localModified || 0,
+      wc: wordCount(parsed.body),
+    };
   });
+
+  if (!settings.showArchived) {
+    entries = entries.filter((e) => !e.tags.includes(ARCHIVE_TAG));
+  }
 
   if (activeTagFilter) {
     entries = entries.filter((e) => e.tags.includes(activeTagFilter));
@@ -336,10 +419,27 @@ function renderIndex() {
     entries = entries.map((e) => ({ ...e, _score: 0 }));
     if (currentSort === "name") {
       entries.sort((a, b) => a.title.localeCompare(b.title));
+    } else if (currentSort === "words") {
+      entries.sort((a, b) => b.wc - a.wc);
+    } else if (currentSort === "created") {
+      // Notes with a known creation date (created via the app) sort first,
+      // newest first; legacy imported notes have no reliable original
+      // creation date, so they're grouped after, sorted by title.
+      entries.sort((a, b) => {
+        const ca = getCreatedTimestamp(a.path);
+        const cb = getCreatedTimestamp(b.path);
+        if (ca !== null && cb !== null) return cb - ca;
+        if (ca !== null) return -1;
+        if (cb !== null) return 1;
+        return a.title.localeCompare(b.title);
+      });
     } else {
-      // modified/created: without git commit dates cached per-file, fall back to path order;
-      // a future pass could store commit timestamps per file for true modified/created sort.
-      entries.sort((a, b) => a.title.localeCompare(b.title));
+      // modified: most recently touched via the app first; notes never
+      // opened in the app fall back to import time, then title order.
+      entries.sort((a, b) => {
+        if (b.localModified !== a.localModified) return b.localModified - a.localModified;
+        return a.title.localeCompare(b.title);
+      });
     }
   }
 
@@ -352,19 +452,37 @@ function renderIndex() {
     row.className = "note-row";
     row.onclick = () => openNote(entry.path);
 
-    const wc = wordCount(entry.body);
+    const wc = entry.wc;
     const isLong = wc >= 500;
+    const isFav = entry.tags.includes(FAVORITE_TAG);
+    const isArchived = entry.tags.includes(ARCHIVE_TAG);
+    const visibleTags = entry.tags.filter((t) => t !== FAVORITE_TAG && t !== ARCHIVE_TAG);
 
     row.innerHTML = `
       <div class="note-row-main">
-        <span class="note-row-title">${escapeHtml(entry.title)}</span>
-        <div class="note-row-tags">${entry.tags.map((t) => `<span class="tag-pill">${escapeHtml(t)}</span>`).join("")}</div>
+        <span class="note-row-title">
+          <span class="note-row-badges">${isFav ? '<span class="favorited">★</span>' : ""}${isArchived ? '<span class="archived-badge">🗄</span>' : ""}</span>
+          ${escapeHtml(entry.title)}
+        </span>
+        <div class="note-row-tags">${visibleTags.map((t) => `<span class="tag-pill">${escapeHtml(t)}</span>`).join("")}</div>
+      </div>
+      <div class="note-row-actions">
+        <button class="row-action-btn favorite-toggle" title="Toggle favorite">${isFav ? "★" : "☆"}</button>
+        <button class="row-action-btn archive-toggle" title="Toggle archive">🗄</button>
       </div>
       <div class="note-row-meta">
         ${wc} words
         ${isLong ? '<span class="essay-flag">● long-form</span>' : ""}
       </div>
     `;
+    row.querySelector(".favorite-toggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleNoteTag(entry.path, FAVORITE_TAG);
+    });
+    row.querySelector(".archive-toggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleNoteTag(entry.path, ARCHIVE_TAG);
+    });
     list.appendChild(row);
   });
 }
@@ -450,7 +568,7 @@ function fuzzyIncludes(haystack, term) {
 document.getElementById("new-note-btn").addEventListener("click", () => {
   const now = new Date();
   const path = `${now.toISOString().slice(0, 10)}-${Date.now()}.md`;
-  cache.notes[path] = { sha: null, content: serializeNote({ tags: [], title: "", body: "" }) };
+  cache.notes[path] = { sha: null, content: serializeNote({ tags: [], title: "", body: "" }), localModified: Date.now() };
   openNote(path, true);
 });
 
@@ -483,6 +601,17 @@ function openNote(path, isNew = false) {
   dirty = false;
   clearIdleTimer();
   loadInlineImages();
+  updateFavoriteArchiveButtons();
+}
+
+function updateFavoriteArchiveButtons() {
+  const favBtn = document.getElementById("favorite-btn");
+  const archiveBtn = document.getElementById("archive-btn");
+  const isFav = currentTags.includes(FAVORITE_TAG);
+  const isArchived = currentTags.includes(ARCHIVE_TAG);
+  favBtn.textContent = isFav ? "★" : "☆";
+  favBtn.classList.toggle("active-state", isFav);
+  archiveBtn.classList.toggle("active-state", isArchived);
 }
 
 async function loadInlineImages() {
@@ -519,6 +648,7 @@ function renderTagChips() {
   const wrap = document.getElementById("tag-chips");
   wrap.innerHTML = "";
   currentTags.forEach((tag, i) => {
+    if (tag === FAVORITE_TAG || tag === ARCHIVE_TAG) return; // shown via dedicated star/archive buttons instead
     const chip = document.createElement("span");
     chip.className = "tag-chip";
     chip.innerHTML = `${escapeHtml(tag)} <button title="Remove tag">×</button>`;
@@ -559,9 +689,54 @@ document.getElementById("bold-btn").addEventListener("click", () => { document.e
 document.getElementById("italic-btn").addEventListener("click", () => { document.execCommand("italic"); markDirty(); });
 document.getElementById("bullet-btn").addEventListener("click", () => { document.execCommand("insertUnorderedList"); markDirty(); });
 
+document.getElementById("favorite-btn").addEventListener("click", () => {
+  const has = currentTags.includes(FAVORITE_TAG);
+  currentTags = has ? currentTags.filter((t) => t !== FAVORITE_TAG) : [...currentTags, FAVORITE_TAG];
+  updateFavoriteArchiveButtons();
+  markDirty();
+});
+document.getElementById("archive-btn").addEventListener("click", () => {
+  const has = currentTags.includes(ARCHIVE_TAG);
+  currentTags = has ? currentTags.filter((t) => t !== ARCHIVE_TAG) : [...currentTags, ARCHIVE_TAG];
+  updateFavoriteArchiveButtons();
+  markDirty();
+});
+
+document.getElementById("save-now-btn").addEventListener("click", () => {
+  dirty = true; // force through even if nothing changed since last idle-check
+  saveCurrentNoteIfDirty();
+});
+
+document.getElementById("refresh-note-btn").addEventListener("click", async () => {
+  if (!currentPath) return;
+  if (dirty && !confirm("This note has unsaved changes that will be lost if you refresh it from the vault. Continue?")) return;
+  document.getElementById("save-indicator").textContent = "refreshing…";
+  try {
+    const file = await fetchFile(currentPath);
+    if (file) {
+      cache.notes[currentPath] = { ...cache.notes[currentPath], sha: file.sha, content: file.content };
+      saveCache();
+      openNote(currentPath);
+      document.getElementById("save-indicator").textContent = "refreshed";
+    }
+  } catch (err) {
+    document.getElementById("save-indicator").textContent = "refresh failed";
+    console.error(err);
+  }
+});
+
 // -- Image insert --
 
+let savedImageInsertRange = null;
+
 document.getElementById("image-btn").addEventListener("click", () => {
+  const sel = window.getSelection();
+  const body = document.getElementById("note-body");
+  if (sel.rangeCount > 0 && body.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+    savedImageInsertRange = sel.getRangeAt(0).cloneRange();
+  } else {
+    savedImageInsertRange = null;
+  }
   document.getElementById("image-input").click();
 });
 
@@ -580,7 +755,20 @@ document.getElementById("image-input").addEventListener("change", async (e) => {
     const img = document.createElement("img");
     img.src = `data:${file.type};base64,${base64}`;
     img.dataset.relpath = attachPath;
-    document.getElementById("note-body").appendChild(img);
+    img.dataset.loaded = "true";
+
+    const body = document.getElementById("note-body");
+    if (savedImageInsertRange) {
+      savedImageInsertRange.deleteContents();
+      savedImageInsertRange.insertNode(img);
+      savedImageInsertRange.setStartAfter(img);
+      savedImageInsertRange.setEndAfter(img);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(savedImageInsertRange);
+    } else {
+      body.appendChild(img);
+    }
     markDirty();
     setSyncStatus("synced");
   } catch (err) {
@@ -686,7 +874,7 @@ function markDirty() {
   dirty = true;
   document.getElementById("save-indicator").textContent = "unsaved changes…";
   clearIdleTimer();
-  idleTimer = setTimeout(() => saveCurrentNoteIfDirty(), IDLE_SAVE_MS);
+  idleTimer = setTimeout(() => saveCurrentNoteIfDirty(), settings.autosaveMs);
 }
 
 function clearIdleTimer() {
@@ -707,7 +895,7 @@ async function saveCurrentNoteIfDirty() {
   const body = htmlToMarkdown(bodyHtml);
   const content = serializeNote({ tags: currentTags, title, body });
 
-  cache.notes[currentPath] = { sha: currentSha, content };
+  cache.notes[currentPath] = { sha: currentSha, content, localModified: Date.now() };
   saveCache(); // local cache updated immediately regardless of network state
 
   if (!navigator.onLine) {
@@ -802,7 +990,6 @@ function inlineMdToHtml(text) {
 function htmlToMarkdown(html) {
   const container = document.createElement("div");
   container.innerHTML = html;
-  const lines = [];
 
   function inlineToMd(node) {
     let out = "";
@@ -818,25 +1005,40 @@ function htmlToMarkdown(html) {
     return out;
   }
 
-  container.childNodes.forEach((node) => {
+  // Recursive block walker: handles the common case where a browser nests a
+  // newly-created <ul> inside an existing <div> line (rather than replacing
+  // it), which a top-level-only check would silently flatten into plain text.
+  function blockToMd(node) {
     if (node.nodeType === Node.TEXT_NODE) {
-      if (node.textContent.trim()) lines.push(node.textContent);
-      return;
+      return node.textContent.trim() ? [node.textContent] : [];
     }
+    if (node.nodeType !== Node.ELEMENT_NODE) return [];
+
     const tag = node.tagName;
+    if (tag === "UL" || tag === "OL") {
+      return [...node.children].map((li) => `- ${inlineToMd(li)}`);
+    }
     if (tag === "IMG") {
       const path = node.dataset.relpath || node.getAttribute("src");
-      lines.push(`![${node.alt || ""}](${path})`);
-    } else if (tag === "UL" || tag === "OL") {
-      [...node.children].forEach((li) => lines.push(`- ${inlineToMd(li)}`));
-    } else if (tag === "DIV" || tag === "P") {
-      const text = inlineToMd(node);
-      lines.push(text === "" ? "" : text);
-    } else {
-      lines.push(inlineToMd(node));
+      return [`![${node.alt || ""}](${path})`];
     }
-  });
+    if (tag === "BR") return [""];
 
+    const hasBlockChild = [...node.childNodes].some(
+      (c) => c.nodeType === Node.ELEMENT_NODE && ["UL", "OL", "DIV", "P", "IMG"].includes(c.tagName)
+    );
+    if (hasBlockChild) {
+      let lines = [];
+      node.childNodes.forEach((child) => { lines = lines.concat(blockToMd(child)); });
+      return lines;
+    }
+
+    const text = inlineToMd(node);
+    return [text];
+  }
+
+  let lines = [];
+  container.childNodes.forEach((node) => { lines = lines.concat(blockToMd(node)); });
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -855,9 +1057,31 @@ function b64DecodeUnicode(base64) {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
-// ---------- Settings / download ----------
+// ---------- Settings modal ----------
 
 document.getElementById("settings-btn").addEventListener("click", () => {
+  document.getElementById("settings-modal").hidden = false;
+});
+document.getElementById("settings-close-btn").addEventListener("click", () => {
+  document.getElementById("settings-modal").hidden = true;
+});
+
+document.getElementById("setting-dark-mode").addEventListener("change", (e) => {
+  settings.darkMode = e.target.checked;
+  saveSettings();
+  applySettings();
+});
+document.getElementById("setting-show-archived").addEventListener("change", (e) => {
+  settings.showArchived = e.target.checked;
+  saveSettings();
+  renderIndex();
+});
+document.getElementById("setting-autosave-interval").addEventListener("change", (e) => {
+  settings.autosaveMs = Number(e.target.value);
+  saveSettings();
+});
+
+document.getElementById("settings-disconnect-btn").addEventListener("click", () => {
   if (confirm("Disconnect this device from the vault? (Your token will be forgotten here; nothing is deleted from GitHub.)")) {
     localStorage.removeItem(LS_CONFIG);
     localStorage.removeItem(LS_CACHE);
@@ -865,7 +1089,7 @@ document.getElementById("settings-btn").addEventListener("click", () => {
   }
 });
 
-document.getElementById("download-btn").addEventListener("click", async () => {
+document.getElementById("settings-download-btn").addEventListener("click", async () => {
   setSyncStatus("zipping…");
   const zip = new JSZip();
   for (const [path, note] of Object.entries(cache.notes)) {
