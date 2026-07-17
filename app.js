@@ -267,11 +267,36 @@ function setOfflineBanner(isOffline) {
 
 function parseNote(content) {
   let tags = [];
+  let created = null;
   let body = content;
 
-  const fmMatch = body.match(/^---\s*\ntags:\s*(.*)\n---\s*\n/);
+  const fmMatch = body.match(/^---\n([\s\S]*?)\n---\n/);
   if (fmMatch) {
-    tags = fmMatch[1].split(",").map((t) => t.trim()).filter(Boolean);
+    const fmBlock = fmMatch[1];
+    const tagsLineMatch = fmBlock.match(/^tags:[ \t]*(.*)$/m);
+    if (tagsLineMatch) {
+      const rest = tagsLineMatch[1].trim();
+      if (rest.startsWith("[")) {
+        // Obsidian-native inline list: tags: [a, b, c]
+        tags = rest.replace(/^\[|\]$/g, "").split(",").map((t) => t.trim()).filter(Boolean);
+      } else if (rest === "") {
+        // Obsidian-native block list:
+        // tags:
+        //   - a
+        //   - b
+        const blockMatch = fmBlock.match(/tags:[ \t]*\n((?:[ \t]*-[ \t]*.+\n?)+)/);
+        if (blockMatch) {
+          tags = blockMatch[1].split("\n").map((l) => l.replace(/^[ \t]*-[ \t]*/, "").trim()).filter(Boolean);
+        }
+      } else {
+        // Backward compat: earlier version of this app wrote a plain
+        // comma-separated string, which isn't a real YAML list and Obsidian
+        // wouldn't recognize as multiple tags. Still parse it on read.
+        tags = rest.split(",").map((t) => t.trim()).filter(Boolean);
+      }
+    }
+    const createdMatch = fmBlock.match(/^created:[ \t]*(.+)$/m);
+    if (createdMatch) created = createdMatch[1].trim();
     body = body.slice(fmMatch[0].length);
   }
 
@@ -282,14 +307,14 @@ function parseNote(content) {
     body = body.slice(titleMatch[0].length);
   }
 
-  return { tags, title, body: body.replace(/^\n+/, "") };
+  return { tags, created, title, body: body.replace(/^\n+/, "") };
 }
 
-function serializeNote({ tags, title, body }) {
-  let out = "";
-  if (tags && tags.length) {
-    out += `---\ntags: ${tags.join(", ")}\n---\n`;
-  }
+function serializeNote({ tags, created, title, body }) {
+  let fm = "";
+  if (tags && tags.length) fm += `tags: [${tags.join(", ")}]\n`;
+  if (created) fm += `created: ${created}\n`;
+  let out = fm ? `---\n${fm}---\n` : "";
   out += `# ${title || "Untitled"}\n\n${body}`;
   return out;
 }
@@ -301,13 +326,19 @@ function wordCount(text) {
 const FAVORITE_TAG = "favorite";
 const ARCHIVE_TAG = "archived";
 
-// Only notes created via the app encode a real creation date in their
-// filename (YYYY-MM-DD-<epoch>.md). Legacy imported notes have no reliable
-// original creation date available - see conversation notes on this gap.
-function getCreatedTimestamp(path) {
-  const m = path.match(/^(\d{4})-(\d{2})-(\d{2})-(\d+)\.md$/);
-  if (!m) return null;
-  return Number(m[4]);
+// Notes created via the app get a real `created` frontmatter timestamp
+// (see serializeNote). Legacy imported notes have no reliable original
+// creation date available yet - that gap gets closed by the Graph API
+// re-import, which pulls OneNote's real createdDateTime per page.
+function getCreatedTimestamp(entry) {
+  if (entry.created) {
+    const t = Date.parse(entry.created);
+    if (!Number.isNaN(t)) return t;
+  }
+  // Not-yet-renamed brand new notes still carry a timestamp in their
+  // placeholder filename as a fallback.
+  const m = entry.path.match(/^(\d{4})-(\d{2})-(\d{2})-(\d+)\.md$/);
+  return m ? Number(m[4]) : null;
 }
 
 async function toggleNoteTag(path, tagName) {
@@ -426,8 +457,8 @@ function renderIndex() {
       // newest first; legacy imported notes have no reliable original
       // creation date, so they're grouped after, sorted by title.
       entries.sort((a, b) => {
-        const ca = getCreatedTimestamp(a.path);
-        const cb = getCreatedTimestamp(b.path);
+        const ca = getCreatedTimestamp(a);
+        const cb = getCreatedTimestamp(b);
         if (ca !== null && cb !== null) return cb - ca;
         if (ca !== null) return -1;
         if (cb !== null) return 1;
@@ -564,7 +595,7 @@ function fuzzyIncludes(haystack, term) {
 document.getElementById("new-note-btn").addEventListener("click", () => {
   const now = new Date();
   const path = `${now.toISOString().slice(0, 10)}-${Date.now()}.md`;
-  cache.notes[path] = { sha: null, content: serializeNote({ tags: [], title: "", body: "" }), localModified: Date.now() };
+  cache.notes[path] = { sha: null, content: serializeNote({ tags: [], created: new Date().toISOString(), title: "", body: "" }), localModified: Date.now() };
   openNote(path, true);
 });
 
@@ -576,6 +607,7 @@ document.getElementById("back-btn").addEventListener("click", async () => {
 });
 
 let currentTags = [];
+let currentCreated = null;
 
 function openNote(path, isNew = false) {
   currentPath = path;
@@ -583,12 +615,13 @@ function openNote(path, isNew = false) {
   const parsed = parseNote(note.content);
   currentSha = note.sha;
   currentTags = [...parsed.tags];
+  currentCreated = parsed.created;
 
   document.getElementById("index-view").hidden = true;
   document.getElementById("editor-view").hidden = false;
 
   document.getElementById("note-title").value = parsed.title === "Untitled" && isNew ? "" : parsed.title;
-  document.getElementById("note-date").textContent = pathToDateLabel(path);
+  document.getElementById("note-date").textContent = noteDateLabel(parsed.created, path);
   updateWordCount(parsed.body);
   renderTagChips();
   document.getElementById("note-body").innerHTML = markdownToHtml(parsed.body);
@@ -618,7 +651,11 @@ async function loadInlineImages() {
   }
 }
 
-function pathToDateLabel(path) {
+function noteDateLabel(created, path) {
+  if (created) {
+    const t = Date.parse(created);
+    if (!Number.isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+  }
   const m = path.match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : "";
 }
@@ -847,6 +884,41 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") saveCurrentNoteIfDirty();
 });
 
+function sanitizeTitleForFilename(title) {
+  let base = (title || "Untitled").trim().replace(/[\/\\:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
+  return base || "Untitled";
+}
+
+function titleToFilename(title, existingPaths) {
+  const base = sanitizeTitleForFilename(title);
+  let candidate = `${base}.md`;
+  let n = 2;
+  while (existingPaths.has(candidate)) {
+    candidate = `${base} (${n}).md`;
+    n++;
+  }
+  return candidate;
+}
+
+// New notes get a placeholder filename until they have a real title (a blank
+// title has nothing meaningful to name the file after). Once a title exists,
+// saveCurrentNoteIfDirty renames the file to match - this matters because
+// Obsidian resolves [[wikilinks]] by filename, not by a title field inside
+// the file, so a mismatch would silently break links to notes made in-app.
+function isPlaceholderFilename(path) {
+  return /^\d{4}-\d{2}-\d{2}-\d+\.md$/.test(path);
+}
+
+async function deleteFile(path, sha) {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${encodeURIComponent(path)}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { ...ghHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ message: `Rename: remove ${path}`, sha, branch: config.branch }),
+  });
+  if (!res.ok) throw new Error("Delete failed: " + res.status);
+}
+
 async function saveCurrentNoteIfDirty() {
   if (!dirty || !currentPath) return;
   clearIdleTimer();
@@ -855,7 +927,52 @@ async function saveCurrentNoteIfDirty() {
   const title = document.getElementById("note-title").value.trim() || "Untitled";
   const bodyHtml = document.getElementById("note-body").innerHTML;
   const body = htmlToMarkdown(bodyHtml);
-  const content = serializeNote({ tags: currentTags, title, body });
+  const content = serializeNote({ tags: currentTags, created: currentCreated, title, body });
+
+  // First real save of a new note: rename from its placeholder filename to
+  // one based on the actual title, so Obsidian's filename-based wikilink
+  // resolution works correctly for notes created in the app.
+  if (isPlaceholderFilename(currentPath) && title !== "Untitled") {
+    const oldPath = currentPath;
+    const oldSha = currentSha;
+    const existingPaths = new Set(Object.keys(cache.notes).filter((p) => p !== oldPath));
+    const newPath = titleToFilename(title, existingPaths);
+
+    if (!navigator.onLine) {
+      // Keep it under the placeholder name locally until we're back online;
+      // renaming needs a create+delete round trip we can't safely queue yet.
+      cache.notes[oldPath] = { sha: oldSha, content, localModified: Date.now() };
+      saveCache();
+      document.getElementById("save-indicator").textContent = "saved locally (offline) — will rename once back online";
+      dirty = false;
+      return;
+    }
+
+    try {
+      const created = await putFile(newPath, b64EncodeUnicode(content), null);
+      if (oldSha) {
+        // Only exists remotely if this note was ever synced before (e.g. it
+        // had body text autosaved under the placeholder name before a title
+        // was added). A never-synced brand-new note has nothing to delete.
+        await deleteFile(oldPath, oldSha);
+      }
+      delete cache.notes[oldPath];
+      currentPath = newPath;
+      currentSha = created.sha;
+      cache.notes[newPath] = { sha: created.sha, content, localModified: Date.now() };
+      saveCache();
+      dirty = false;
+      document.getElementById("save-indicator").textContent = "saved";
+      return;
+    } catch (err) {
+      console.error("Rename-on-first-save failed:", err);
+      document.getElementById("save-indicator").textContent = "saved locally, rename will retry";
+      cache.notes[oldPath] = { sha: oldSha, content, localModified: Date.now() };
+      saveCache();
+      dirty = false;
+      return;
+    }
+  }
 
   cache.notes[currentPath] = { sha: currentSha, content, localModified: Date.now() };
   saveCache(); // local cache updated immediately regardless of network state
