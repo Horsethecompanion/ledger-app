@@ -689,10 +689,25 @@ document.getElementById("tag-input").addEventListener("keydown", (e) => {
     addTagFromInput();
   }
 });
+document.getElementById("tag-input").addEventListener("input", (e) => {
+  // Live-convert spaces to hyphens as you type - Obsidian tags can't
+  // contain spaces at all, so waiting until submit would let you see an
+  // invalid-looking tag briefly before it's fixed.
+  const cursorAtEnd = e.target.selectionEnd === e.target.value.length;
+  if (/\s/.test(e.target.value) && cursorAtEnd) {
+    e.target.value = e.target.value.replace(/\s+/g, "-");
+  }
+});
+
+function sanitizeTag(raw) {
+  // Obsidian tags allow only letters, numbers, underscore, hyphen, and
+  // forward slash (for nested tags) - no spaces at all.
+  return raw.trim().replace(/\s+/g, "-");
+}
 
 function addTagFromInput() {
   const input = document.getElementById("tag-input");
-  const value = input.value.trim();
+  const value = sanitizeTag(input.value);
   if (!value) return;
   currentTags.push(value);
   input.value = "";
