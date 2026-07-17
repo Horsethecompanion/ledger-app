@@ -818,6 +818,9 @@ document.getElementById("note-body").addEventListener("input", () => {
 });
 document.getElementById("note-title").addEventListener("input", markDirty);
 
+let backlinkTriggerNode = null;
+let backlinkTriggerOffset = null;
+
 function checkBacklinkTrigger() {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
@@ -826,6 +829,8 @@ function checkBacklinkTrigger() {
   const textBefore = node.textContent.slice(0, sel.anchorOffset);
   const match = textBefore.match(/\[\[([^\]]*)$/);
   if (!match) return hideAutocomplete();
+  backlinkTriggerNode = node;
+  backlinkTriggerOffset = sel.anchorOffset;
   showBacklinkAutocomplete(match[1]);
 }
 
@@ -844,7 +849,15 @@ function showBacklinkAutocomplete(query) {
   box.hidden = false;
 
   [...box.children].forEach((el, i) => {
-    el.onclick = () => insertBacklink(titles[i], query);
+    // Insert on mousedown itself (not click) and prevent default there -
+    // waiting for click leaves a gap where the browser can move focus/
+    // selection away from note-body first, especially on Safari/macOS,
+    // silently breaking the insertion.
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      insertBacklink(titles[i], query);
+    });
   });
 
   const sel = window.getSelection();
@@ -859,12 +872,22 @@ function hideAutocomplete() {
 }
 
 function insertBacklink(title, query) {
-  const sel = window.getSelection();
-  const node = sel.anchorNode;
-  const textBefore = node.textContent.slice(0, sel.anchorOffset);
+  const node = backlinkTriggerNode;
+  if (!node || !node.isConnected) {
+    // Saved position no longer valid (rare) - fall back to live selection.
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return hideAutocomplete();
+    insertBacklinkAtNode(sel.anchorNode, sel.anchorOffset, title);
+    return;
+  }
+  insertBacklinkAtNode(node, backlinkTriggerOffset, title);
+}
+
+function insertBacklinkAtNode(node, offset, title) {
+  const textBefore = node.textContent.slice(0, offset);
   const idx = textBefore.lastIndexOf("[[");
   const before = node.textContent.slice(0, idx);
-  const after = node.textContent.slice(sel.anchorOffset);
+  const after = node.textContent.slice(offset);
 
   const link = document.createElement("a");
   link.className = "wikilink";
