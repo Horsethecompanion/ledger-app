@@ -1165,6 +1165,19 @@ function htmlToMarkdown(html) {
     }
     if (tag === "BR") return [""];
 
+    // A div/p containing only a single <br> represents one blank source
+    // line (see markdownToHtml). Handle it directly rather than falling
+    // through to inlineToMd, which would convert that <br> into an
+    // embedded newline and add an extra blank line on every round-trip.
+    if (
+      (tag === "DIV" || tag === "P") &&
+      node.childNodes.length === 1 &&
+      node.childNodes[0].nodeType === Node.ELEMENT_NODE &&
+      node.childNodes[0].tagName === "BR"
+    ) {
+      return [""];
+    }
+
     const hasBlockChild = [...node.childNodes].some(
       (c) => c.nodeType === Node.ELEMENT_NODE && ["UL", "OL", "DIV", "P", "IMG"].includes(c.tagName)
     );
@@ -1180,7 +1193,7 @@ function htmlToMarkdown(html) {
 
   let lines = [];
   container.childNodes.forEach((node) => { lines = lines.concat(blockToMd(node)); });
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return lines.join("\n").trim();
 }
 
 // ---------- Base64 helpers (unicode-safe) ----------
