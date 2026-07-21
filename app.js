@@ -268,6 +268,7 @@ function setOfflineBanner(isOffline) {
 function parseNote(content) {
   let tags = [];
   let created = null;
+  let modified = null;
   let body = content;
 
   const fmMatch = body.match(/^---\n([\s\S]*?)\n---\n/);
@@ -297,6 +298,8 @@ function parseNote(content) {
     }
     const createdMatch = fmBlock.match(/^created:[ \t]*(.+)$/m);
     if (createdMatch) created = createdMatch[1].trim();
+    const modifiedMatch = fmBlock.match(/^modified:[ \t]*(.+)$/m);
+    if (modifiedMatch) modified = modifiedMatch[1].trim();
     body = body.slice(fmMatch[0].length);
   }
 
@@ -307,13 +310,14 @@ function parseNote(content) {
     body = body.slice(titleMatch[0].length);
   }
 
-  return { tags, created, title, body: body.replace(/^\n+/, "") };
+  return { tags, created, modified, title, body: body.replace(/^\n+/, "") };
 }
 
-function serializeNote({ tags, created, title, body }) {
+function serializeNote({ tags, created, modified, title, body }) {
   let fm = "";
   if (tags && tags.length) fm += `tags: [${tags.join(", ")}]\n`;
   if (created) fm += `created: ${created}\n`;
+  if (modified) fm += `modified: ${modified}\n`;
   let out = fm ? `---\n${fm}---\n` : "";
   out += `# ${title || "Untitled"}\n\n${body}`;
   return out;
@@ -326,19 +330,33 @@ function wordCount(text) {
 const FAVORITE_TAG = "favorite";
 const ARCHIVE_TAG = "archived";
 
-// Notes created via the app get a real `created` frontmatter timestamp
-// (see serializeNote). Legacy imported notes have no reliable original
-// creation date available yet - that gap gets closed by the Graph API
-// re-import, which pulls OneNote's real createdDateTime per page.
+// Every note now carries a real `created` frontmatter timestamp - either
+// from OneNote's own createdDateTime (the Graph API import) or set at
+// creation time for notes made directly in the app.
 function getCreatedTimestamp(entry) {
   if (entry.created) {
     const t = Date.parse(entry.created);
     if (!Number.isNaN(t)) return t;
   }
-  // Not-yet-renamed brand new notes still carry a timestamp in their
-  // placeholder filename as a fallback.
+  // Fallback for the rare case of a brand new, not-yet-renamed note that
+  // somehow lacks a created field - its placeholder filename still carries
+  // a timestamp.
   const m = entry.path.match(/^(\d{4})-(\d{2})-(\d{2})-(\d+)\.md$/);
   return m ? Number(m[4]) : null;
+}
+
+// Modified timestamp: prefers the real `modified` frontmatter field (set on
+// every save, synced via git - so it's consistent across every device),
+// falling back to the device-local cache only for the rare note that
+// somehow doesn't have the frontmatter field yet, then to created, so
+// nothing ever sorts as if it were never touched at all.
+function getModifiedTimestamp(entry) {
+  if (entry.modified) {
+    const t = Date.parse(entry.modified);
+    if (!Number.isNaN(t)) return t;
+  }
+  if (entry.localModified) return entry.localModified;
+  return getCreatedTimestamp(entry) || 0;
 }
 
 async function toggleNoteTag(path, tagName) {
@@ -347,6 +365,7 @@ async function toggleNoteTag(path, tagName) {
   const parsed = parseNote(note.content);
   const has = parsed.tags.includes(tagName);
   parsed.tags = has ? parsed.tags.filter((t) => t !== tagName) : [...parsed.tags, tagName];
+  parsed.modified = new Date().toISOString();
   const newContent = serializeNote(parsed);
   const sha = note.sha;
   cache.notes[path] = { ...note, content: newContent, localModified: Date.now() };
@@ -465,10 +484,12 @@ function renderIndex() {
         return a.title.localeCompare(b.title);
       });
     } else {
-      // modified: most recently touched via the app first; notes never
-      // opened in the app fall back to import time, then title order.
+      // modified: real, synced timestamp from frontmatter - consistent
+      // across every device, not just "touched on this browser."
       entries.sort((a, b) => {
-        if (b.localModified !== a.localModified) return b.localModified - a.localModified;
+        const ma = getModifiedTimestamp(a);
+        const mb = getModifiedTimestamp(b);
+        if (mb !== ma) return mb - ma;
         return a.title.localeCompare(b.title);
       });
     }
@@ -608,6 +629,7 @@ document.getElementById("back-btn").addEventListener("click", async () => {
 
 let currentTags = [];
 let currentCreated = null;
+let currentModified = null;
 
 function openNote(path, isNew = false) {
   currentPath = path;
@@ -616,6 +638,7 @@ function openNote(path, isNew = false) {
   currentSha = note.sha;
   currentTags = [...parsed.tags];
   currentCreated = parsed.created;
+  currentModified = parsed.modified;
 
   document.getElementById("index-view").hidden = true;
   document.getElementById("editor-view").hidden = false;
@@ -965,7 +988,8 @@ async function saveCurrentNoteIfDirty() {
   const title = document.getElementById("note-title").value.trim() || "Untitled";
   const bodyHtml = document.getElementById("note-body").innerHTML;
   const body = htmlToMarkdown(bodyHtml);
-  const content = serializeNote({ tags: currentTags, created: currentCreated, title, body });
+  currentModified = new Date().toISOString();
+  const content = serializeNote({ tags: currentTags, created: currentCreated, modified: currentModified, title, body });
 
   // First real save of a new note: rename from its placeholder filename to
   // one based on the actual title, so Obsidian's filename-based wikilink
