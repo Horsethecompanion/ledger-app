@@ -834,6 +834,16 @@ async function sha1Hex(base64) {
 
 // -- Backlinks: [[ triggers autocomplete of existing note titles --
 
+document.getElementById("note-body").addEventListener("paste", (e) => {
+  // Apps like Outlook/Word put a hard <br> in their clipboard HTML at every
+  // point the text visually wrapped in the source window - preserving that
+  // as real line breaks turns one pasted paragraph into a dozen fake ones.
+  // Plain text has no such artifact, so always paste as plain text.
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+  document.execCommand("insertText", false, text);
+});
+
 document.getElementById("note-body").addEventListener("input", () => {
   markDirty();
   updateWordCount(htmlToMarkdown(document.getElementById("note-body").innerHTML));
