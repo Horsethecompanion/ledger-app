@@ -371,6 +371,33 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
 }
 .backlink-option:hover, .backlink-option.selected { background: var(--clay-soft); }
 
+.thesaurus-popover {
+  position: absolute;
+  background: var(--paper-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 25;
+  min-width: 180px;
+  padding: 6px;
+}
+.thesaurus-word {
+  padding: 8px 12px;
+  font-family: var(--serif);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.thesaurus-word:hover { background: var(--clay-soft); }
+.thesaurus-empty {
+  padding: 8px 12px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
 .offline-banner {
   position: fixed;
   bottom: 0;

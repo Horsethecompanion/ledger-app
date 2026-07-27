@@ -620,11 +620,34 @@ document.getElementById("new-note-btn").addEventListener("click", () => {
   openNote(path, true);
 });
 
-document.getElementById("back-btn").addEventListener("click", async () => {
+async function goToIndexFromEditor() {
   await saveCurrentNoteIfDirty();
   document.getElementById("editor-view").hidden = true;
   document.getElementById("index-view").hidden = false;
   renderIndex();
+}
+
+document.getElementById("back-btn").addEventListener("click", () => {
+  // Goes through history.back() rather than calling goToIndexFromEditor()
+  // directly, so the popstate handler below is the single source of truth -
+  // keeps the pushed history state balanced whether you leave the editor
+  // via this button or Android's hardware back button.
+  if (history.state && history.state.view === "editor") {
+    history.back();
+  } else {
+    goToIndexFromEditor();
+  }
+});
+
+// Android's hardware/gesture back button, with no in-app history to
+// consume, doesn't background the app - it closes the page outright,
+// risking losing an unsaved edit. Pushing a state on entering the editor
+// means the first back-press just pops that state (triggering popstate,
+// handled here) instead of exiting, giving us a chance to save first.
+window.addEventListener("popstate", () => {
+  if (!document.getElementById("editor-view").hidden) {
+    goToIndexFromEditor();
+  }
 });
 
 let currentTags = [];
@@ -642,6 +665,9 @@ function openNote(path, isNew = false) {
 
   document.getElementById("index-view").hidden = true;
   document.getElementById("editor-view").hidden = false;
+  if (!history.state || history.state.view !== "editor") {
+    history.pushState({ view: "editor" }, "", "");
+  }
 
   document.getElementById("note-title").value = parsed.title === "Untitled" && isNew ? "" : parsed.title;
   document.getElementById("note-date").textContent = noteDateLabel(parsed.created, path);
@@ -652,6 +678,7 @@ function openNote(path, isNew = false) {
   if (isNew) document.getElementById("note-title").focus();
   dirty = false;
   clearIdleTimer();
+  clearDotCountdown();
   loadInlineImages();
 }
 
@@ -762,7 +789,77 @@ document.getElementById("refresh-note-btn").addEventListener("click", async () =
   }
 });
 
-// -- Image insert --
+// -- Thesaurus --
+
+let thesaurusRange = null;
+
+document.getElementById("thesaurus-btn").addEventListener("click", async () => {
+  const sel = window.getSelection();
+  const body = document.getElementById("note-body");
+  const popover = document.getElementById("thesaurus-popover");
+
+  if (!sel.rangeCount || sel.isCollapsed || !body.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+    popover.innerHTML = '<div class="thesaurus-empty">Select a word first</div>';
+    positionPopoverNearSelectionOrButton(popover);
+    popover.hidden = false;
+    setTimeout(() => { popover.hidden = true; }, 2000);
+    return;
+  }
+
+  const range = sel.getRangeAt(0);
+  thesaurusRange = range.cloneRange();
+  const word = range.toString().trim().split(/\s+/)[0].replace(/[^\w'-]/g, "");
+  if (!word) return;
+
+  popover.innerHTML = '<div class="thesaurus-empty">Looking up…</div>';
+  positionPopoverNearSelectionOrButton(popover, range);
+  popover.hidden = false;
+
+  try {
+    const res = await fetch(`https://api.datamuse.com/words?rel_syn=${encodeURIComponent(word)}&max=8`);
+    if (!res.ok) throw new Error("lookup failed");
+    const results = await res.json();
+    if (!results.length) {
+      popover.innerHTML = '<div class="thesaurus-empty">No synonyms found</div>';
+      return;
+    }
+    popover.innerHTML = "";
+    results.forEach((r) => {
+      const el = document.createElement("div");
+      el.className = "thesaurus-word";
+      el.textContent = r.word;
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // keep focus/selection intact, same fix as the wikilink dropdown
+        if (!thesaurusRange) return;
+        thesaurusRange.deleteContents();
+        thesaurusRange.insertNode(document.createTextNode(r.word));
+        popover.hidden = true;
+        markDirty();
+      });
+      popover.appendChild(el);
+    });
+  } catch (err) {
+    popover.innerHTML = '<div class="thesaurus-empty">Couldn\'t reach thesaurus (offline?)</div>';
+  }
+});
+
+function positionPopoverNearSelectionOrButton(popover, range) {
+  let rect;
+  if (range) {
+    rect = range.getBoundingClientRect();
+  } else {
+    rect = document.getElementById("thesaurus-btn").getBoundingClientRect();
+  }
+  popover.style.left = rect.left + "px";
+  popover.style.top = rect.bottom + window.scrollY + 6 + "px";
+}
+
+document.addEventListener("click", (e) => {
+  const popover = document.getElementById("thesaurus-popover");
+  if (!popover.hidden && e.target !== document.getElementById("thesaurus-btn") && !popover.contains(e.target)) {
+    popover.hidden = true;
+  }
+});
 
 let savedImageInsertRange = null;
 
@@ -940,20 +1037,70 @@ function insertBacklinkAtNode(node, offset, title) {
 
 // -- Save flow: idle-triggered + visibility fallback, with stale-write guard --
 
+let dotCountdownTimer = null;
+
 function markDirty() {
   dirty = true;
-  document.getElementById("save-indicator").textContent = "unsaved changes…";
   clearIdleTimer();
+  clearDotCountdown();
+
+  const stages = ["unsaved changes...", "unsaved changes..", "unsaved changes.", "unsaved changes"];
+  let stageIndex = 0;
+  document.getElementById("save-indicator").textContent = stages[0];
+
+  const stepMs = settings.autosaveMs / stages.length;
+  dotCountdownTimer = setInterval(() => {
+    stageIndex++;
+    if (stageIndex < stages.length) {
+      document.getElementById("save-indicator").textContent = stages[stageIndex];
+    } else {
+      clearDotCountdown();
+    }
+  }, stepMs);
+
   idleTimer = setTimeout(() => saveCurrentNoteIfDirty(), settings.autosaveMs);
+}
+
+function clearDotCountdown() {
+  if (dotCountdownTimer) clearInterval(dotCountdownTimer);
+  dotCountdownTimer = null;
 }
 
 function clearIdleTimer() {
   if (idleTimer) clearTimeout(idleTimer);
 }
 
+// Synchronous, local-only persistence - deliberately does NOT touch the
+// network. Android's hardware back button (and swiping an app away) can
+// tear the page down abruptly; if we only relied on the async network-sync
+// path, an in-flight save could be cut off before localStorage was ever
+// written. This function is safe to call as an instant last line of
+// defense whenever the page might be about to disappear.
+function flushToLocalCache() {
+  if (!dirty || !currentPath) return;
+  const title = document.getElementById("note-title").value.trim() || "Untitled";
+  const body = htmlToMarkdown(document.getElementById("note-body").innerHTML);
+  const content = serializeNote({ tags: currentTags, created: currentCreated, modified: currentModified || new Date().toISOString(), title, body });
+  cache.notes[currentPath] = { ...cache.notes[currentPath], sha: currentSha, content, localModified: Date.now() };
+  saveCache();
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") saveCurrentNoteIfDirty();
+  if (document.visibilityState === "hidden") {
+    flushToLocalCache();
+    saveCurrentNoteIfDirty();
+  } else if (document.visibilityState === "visible") {
+    // Coming back to the app (e.g. switching from phone to laptop) -
+    // refresh in the background so you don't have to wait or manually
+    // reload to see edits made elsewhere.
+    if (config && cache && !dirty) {
+      incrementalSync().then(() => {
+        if (document.getElementById("index-view").hidden === false) renderIndex();
+      });
+    }
+  }
 });
+window.addEventListener("pagehide", flushToLocalCache);
 
 function sanitizeTitleForFilename(title) {
   let base = (title || "Untitled").trim().replace(/[\/\\:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
@@ -993,6 +1140,7 @@ async function deleteFile(path, sha) {
 async function saveCurrentNoteIfDirty() {
   if (!dirty || !currentPath) return;
   clearIdleTimer();
+  clearDotCountdown();
   document.getElementById("save-indicator").textContent = "saving…";
 
   const title = document.getElementById("note-title").value.trim() || "Untitled";
