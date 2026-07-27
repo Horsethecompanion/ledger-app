@@ -771,24 +771,6 @@ document.getElementById("bold-btn").addEventListener("click", () => { document.e
 document.getElementById("italic-btn").addEventListener("click", () => { document.execCommand("italic"); markDirty(); });
 document.getElementById("bullet-btn").addEventListener("click", () => { document.execCommand("insertUnorderedList"); markDirty(); });
 
-document.getElementById("refresh-note-btn").addEventListener("click", async () => {
-  if (!currentPath) return;
-  if (dirty && !confirm("This note has unsaved changes that will be lost if you refresh it from the vault. Continue?")) return;
-  document.getElementById("save-indicator").textContent = "refreshing…";
-  try {
-    const file = await fetchFile(currentPath);
-    if (file) {
-      cache.notes[currentPath] = { ...cache.notes[currentPath], sha: file.sha, content: file.content };
-      saveCache();
-      openNote(currentPath);
-      document.getElementById("save-indicator").textContent = "refreshed";
-    }
-  } catch (err) {
-    document.getElementById("save-indicator").textContent = "refresh failed";
-    console.error(err);
-  }
-});
-
 // -- Thesaurus --
 
 let thesaurusRange = null;
