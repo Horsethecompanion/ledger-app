@@ -793,6 +793,10 @@ document.getElementById("refresh-note-btn").addEventListener("click", async () =
 
 let thesaurusRange = null;
 
+document.getElementById("thesaurus-btn").addEventListener("mousedown", (e) => {
+  e.preventDefault(); // stop the default focus-shift/blur, which would collapse the selection
+});
+
 document.getElementById("thesaurus-btn").addEventListener("click", async () => {
   const sel = window.getSelection();
   const body = document.getElementById("note-body");
@@ -856,7 +860,8 @@ function positionPopoverNearSelectionOrButton(popover, range) {
 
 document.addEventListener("click", (e) => {
   const popover = document.getElementById("thesaurus-popover");
-  if (!popover.hidden && e.target !== document.getElementById("thesaurus-btn") && !popover.contains(e.target)) {
+  const thesaurusBtn = document.getElementById("thesaurus-btn");
+  if (!popover.hidden && !thesaurusBtn.contains(e.target) && !popover.contains(e.target)) {
     popover.hidden = true;
   }
 });
