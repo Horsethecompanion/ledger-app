@@ -439,6 +439,35 @@ function renderTagFilterBar() {
   });
 }
 
+function applySort(entries) {
+  if (currentSort === "name") {
+    entries.sort((a, b) => a.title.localeCompare(b.title));
+  } else if (currentSort === "words") {
+    entries.sort((a, b) => b.wc - a.wc);
+  } else if (currentSort === "created") {
+    // Notes with a known creation date (created via the app) sort first,
+    // newest first; legacy imported notes have no reliable original
+    // creation date, so they're grouped after, sorted by title.
+    entries.sort((a, b) => {
+      const ca = getCreatedTimestamp(a);
+      const cb = getCreatedTimestamp(b);
+      if (ca !== null && cb !== null) return cb - ca;
+      if (ca !== null) return -1;
+      if (cb !== null) return 1;
+      return a.title.localeCompare(b.title);
+    });
+  } else {
+    // modified: real, synced timestamp from frontmatter - consistent
+    // across every device, not just "touched on this browser."
+    entries.sort((a, b) => {
+      const ma = getModifiedTimestamp(a);
+      const mb = getModifiedTimestamp(b);
+      if (mb !== ma) return mb - ma;
+      return a.title.localeCompare(b.title);
+    });
+  }
+}
+
 function renderIndex() {
   document.getElementById("index-loading").hidden = true;
   renderTagFilterBar();
@@ -465,34 +494,10 @@ function renderIndex() {
 
   if (query) {
     entries = searchNotes(entries, query);
+    applySort(entries); // sort controls should still apply while searching, not just relevance
   } else {
     entries = entries.map((e) => ({ ...e, _score: 0 }));
-    if (currentSort === "name") {
-      entries.sort((a, b) => a.title.localeCompare(b.title));
-    } else if (currentSort === "words") {
-      entries.sort((a, b) => b.wc - a.wc);
-    } else if (currentSort === "created") {
-      // Notes with a known creation date (created via the app) sort first,
-      // newest first; legacy imported notes have no reliable original
-      // creation date, so they're grouped after, sorted by title.
-      entries.sort((a, b) => {
-        const ca = getCreatedTimestamp(a);
-        const cb = getCreatedTimestamp(b);
-        if (ca !== null && cb !== null) return cb - ca;
-        if (ca !== null) return -1;
-        if (cb !== null) return 1;
-        return a.title.localeCompare(b.title);
-      });
-    } else {
-      // modified: real, synced timestamp from frontmatter - consistent
-      // across every device, not just "touched on this browser."
-      entries.sort((a, b) => {
-        const ma = getModifiedTimestamp(a);
-        const mb = getModifiedTimestamp(b);
-        if (mb !== ma) return mb - ma;
-        return a.title.localeCompare(b.title);
-      });
-    }
+    applySort(entries);
   }
 
   const list = document.getElementById("note-list");
@@ -1145,6 +1150,11 @@ function flushToLocalCache() {
   if (!dirty || !currentPath) return;
   const title = document.getElementById("note-title").value.trim() || "Untitled";
   const body = htmlToMarkdown(document.getElementById("note-body").innerHTML);
+
+  if (isPlaceholderFilename(currentPath) && title === "Untitled" && body.trim() === "" && currentTags.length === 0) {
+    return; // nothing worth persisting - saveCurrentNoteIfDirty will discard it properly
+  }
+
   const content = serializeNote({ tags: currentTags, created: currentCreated, modified: currentModified || new Date().toISOString(), title, body });
   cache.notes[currentPath] = { ...cache.notes[currentPath], sha: currentSha, content, localModified: Date.now() };
   saveCache();
@@ -1211,6 +1221,31 @@ async function saveCurrentNoteIfDirty() {
   const title = document.getElementById("note-title").value.trim() || "Untitled";
   const bodyHtml = document.getElementById("note-body").innerHTML;
   const body = htmlToMarkdown(bodyHtml);
+
+  // A brand-new, never-renamed note with no title, no body, and no tags is
+  // almost certainly just an accidental tap rather than something worth
+  // keeping - discard it rather than cluttering the vault with "Untitled".
+  const isEmptyNewNote = isPlaceholderFilename(currentPath) &&
+    (title === "Untitled") &&
+    body.trim() === "" &&
+    currentTags.length === 0;
+
+  if (isEmptyNewNote) {
+    const shaToDelete = currentSha;
+    const pathToDelete = currentPath;
+    delete cache.notes[currentPath];
+    saveCache();
+    dirty = false;
+    if (shaToDelete && navigator.onLine) {
+      try {
+        await deleteFile(pathToDelete, shaToDelete);
+      } catch (err) {
+        console.error("Failed to remove emptied-out note remotely:", err);
+      }
+    }
+    return;
+  }
+
   currentModified = new Date().toISOString();
   const content = serializeNote({ tags: currentTags, created: currentCreated, modified: currentModified, title, body });
 
