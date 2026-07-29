@@ -747,6 +747,45 @@ document.getElementById("tag-input").addEventListener("input", (e) => {
   if (/\s/.test(e.target.value) && cursorAtEnd) {
     e.target.value = e.target.value.replace(/\s+/g, "-");
   }
+  showTagSuggestions(e.target.value);
+});
+
+function showTagSuggestions(query) {
+  const box = document.getElementById("tag-autocomplete");
+  query = query.trim().toLowerCase();
+  if (!query) { box.hidden = true; return; }
+
+  const matches = getAllTags()
+    .filter((t) => t !== FAVORITE_TAG && t !== ARCHIVE_TAG && !currentTags.includes(t))
+    .filter((t) => t.toLowerCase().includes(query))
+    .sort((a, b) => a.toLowerCase().indexOf(query) - b.toLowerCase().indexOf(query))
+    .slice(0, 6);
+
+  if (!matches.length) { box.hidden = true; return; }
+
+  box.innerHTML = matches.map((t) => `<div class="tag-suggestion">${escapeHtml(t)}</div>`).join("");
+  const inputRect = document.getElementById("tag-input").getBoundingClientRect();
+  box.style.left = inputRect.left + "px";
+  box.style.top = inputRect.bottom + window.scrollY + 4 + "px";
+  box.hidden = false;
+
+  [...box.children].forEach((el, i) => {
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault(); // keep focus/selection intact, same fix used elsewhere
+      currentTags.push(matches[i]);
+      document.getElementById("tag-input").value = "";
+      box.hidden = true;
+      renderTagChips();
+      markDirty();
+    });
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const box = document.getElementById("tag-autocomplete");
+  if (!box.hidden && e.target.id !== "tag-input" && !box.contains(e.target)) {
+    box.hidden = true;
+  }
 });
 
 function sanitizeTag(raw) {
@@ -761,6 +800,7 @@ function addTagFromInput() {
   if (!value) return;
   currentTags.push(value);
   input.value = "";
+  document.getElementById("tag-autocomplete").hidden = true;
   renderTagChips();
   markDirty();
 }
@@ -784,29 +824,67 @@ document.getElementById("thesaurus-btn").addEventListener("click", async () => {
   const body = document.getElementById("note-body");
   const popover = document.getElementById("thesaurus-popover");
 
-  if (!sel.rangeCount || sel.isCollapsed || !body.contains(sel.getRangeAt(0).commonAncestorContainer)) {
-    popover.innerHTML = '<div class="thesaurus-empty">Select a word first</div>';
-    positionPopoverNearSelectionOrButton(popover);
-    popover.hidden = false;
-    setTimeout(() => { popover.hidden = true; }, 2000);
+  const hasRealSelection = sel.rangeCount && !sel.isCollapsed && body.contains(sel.getRangeAt(0).commonAncestorContainer);
+
+  if (hasRealSelection) {
+    const range = sel.getRangeAt(0);
+    thesaurusRange = range.cloneRange();
+    const word = range.toString().trim().split(/\s+/)[0].replace(/[^\w'-]/g, "");
+    if (!word) return;
+    await runWordLookup(word, range, "rel_syn", "No synonyms found");
     return;
   }
 
-  const range = sel.getRangeAt(0);
-  thesaurusRange = range.cloneRange();
-  const word = range.toString().trim().split(/\s+/)[0].replace(/[^\w'-]/g, "");
-  if (!word) return;
+  // Nothing selected - check spelling of whatever word the cursor is
+  // currently sitting in, rather than doing nothing.
+  const wordInfo = getWordAtCursor();
+  if (!wordInfo) {
+    popover.innerHTML = '<div class="thesaurus-empty">Select a word, or place cursor in one, first</div>';
+    positionPopoverNearSelectionOrButton(popover);
+    popover.hidden = false;
+    setTimeout(() => { popover.hidden = true; }, 2500);
+    return;
+  }
+  thesaurusRange = wordInfo.range;
+  await runWordLookup(wordInfo.word, wordInfo.range, "sp", "Looks correctly spelled", wordInfo.word);
+});
 
+function getWordAtCursor() {
+  const sel = window.getSelection();
+  const body = document.getElementById("note-body");
+  if (!sel.rangeCount) return null;
+  const node = sel.getRangeAt(0).startContainer;
+  if (!node || node.nodeType !== Node.TEXT_NODE || !body.contains(node)) return null;
+
+  const text = node.textContent;
+  const offset = sel.getRangeAt(0).startOffset;
+  let start = offset, end = offset;
+  const isWordChar = (c) => /[\w'-]/.test(c);
+  while (start > 0 && isWordChar(text[start - 1])) start--;
+  while (end < text.length && isWordChar(text[end])) end++;
+  if (start === end) return null;
+
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  return { word: text.slice(start, end), range };
+}
+
+async function runWordLookup(word, range, mode, emptyMessage, excludeExact) {
+  const popover = document.getElementById("thesaurus-popover");
   popover.innerHTML = '<div class="thesaurus-empty">Looking up…</div>';
   positionPopoverNearSelectionOrButton(popover, range);
   popover.hidden = false;
 
   try {
-    const res = await fetch(`https://api.datamuse.com/words?rel_syn=${encodeURIComponent(word)}&max=8`);
+    const res = await fetch(`https://api.datamuse.com/words?${mode}=${encodeURIComponent(word)}&max=8`);
     if (!res.ok) throw new Error("lookup failed");
-    const results = await res.json();
+    let results = await res.json();
+    if (excludeExact) {
+      results = results.filter((r) => r.word.toLowerCase() !== excludeExact.toLowerCase());
+    }
     if (!results.length) {
-      popover.innerHTML = '<div class="thesaurus-empty">No synonyms found</div>';
+      popover.innerHTML = `<div class="thesaurus-empty">${emptyMessage}</div>`;
       return;
     }
     popover.innerHTML = "";
@@ -827,7 +905,7 @@ document.getElementById("thesaurus-btn").addEventListener("click", async () => {
   } catch (err) {
     popover.innerHTML = '<div class="thesaurus-empty">Couldn\'t reach thesaurus (offline?)</div>';
   }
-});
+}
 
 function positionPopoverNearSelectionOrButton(popover, range) {
   let rect;

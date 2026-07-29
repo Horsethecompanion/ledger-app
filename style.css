@@ -371,6 +371,24 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
 }
 .backlink-option:hover, .backlink-option.selected { background: var(--clay-soft); }
 
+.tag-autocomplete {
+  position: absolute;
+  background: var(--paper-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  z-index: 22;
+  min-width: 160px;
+}
+.tag-suggestion {
+  padding: 6px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--clay);
+  cursor: pointer;
+}
+.tag-suggestion:hover, .tag-suggestion.selected { background: var(--clay-soft); }
+
 .thesaurus-popover {
   position: absolute;
   background: var(--paper-raised);
