@@ -603,13 +603,22 @@ function searchNotes(entries, query) {
   return scored;
 }
 
-// Very lightweight typo-tolerance: true if term's characters appear in haystack
-// in order within a small window (a subsequence check), not a full edit-distance.
+// Very lightweight typo-tolerance: true if term is a subsequence of some
+// individual word in the haystack (not the haystack as a whole - checking
+// "do these letters appear in order somewhere across an entire long note"
+// is nearly always true by chance once a note is a few thousand characters,
+// since common letters recur constantly; bounding to single words keeps
+// the check meaningful).
 function fuzzyIncludes(haystack, term) {
-  if (term.length < 4) return false; // skip fuzzy on very short terms, too noisy
+  if (term.length < 4) return false;
+  const words = haystack.split(/[^a-z0-9']+/i);
+  return words.some((word) => word.length <= term.length + 3 && isSubsequence(term, word));
+}
+
+function isSubsequence(term, word) {
   let hi = 0;
   for (let ti = 0; ti < term.length; ti++) {
-    const idx = haystack.indexOf(term[ti], hi);
+    const idx = word.indexOf(term[ti], hi);
     if (idx === -1) return false;
     hi = idx + 1;
   }
