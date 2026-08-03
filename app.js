@@ -71,12 +71,66 @@ function saveConfig() {
 }
 
 function loadCache() {
-  const raw = localStorage.getItem(LS_CACHE);
-  cache = raw ? JSON.parse(raw) : { notes: {}, lastSync: null };
+  try {
+    const raw = localStorage.getItem(LS_CACHE);
+    cache = raw ? JSON.parse(raw) : { notes: {}, lastSync: null };
+    if (!cache || typeof cache !== "object" || typeof cache.notes !== "object") {
+      throw new Error("malformed cache");
+    }
+  } catch (err) {
+    // A truncated/corrupt cache (e.g. a write interrupted by the page being
+    // killed) would otherwise throw at boot and leave a blank app. Start
+    // clean instead - sync repopulates from GitHub, which is the real
+    // source of truth.
+    console.error("Cache unreadable, starting fresh:", err);
+    cache = { notes: {}, lastSync: null };
+  }
 }
 
+let _cachePersistFailed = false;
+
+function isQuotaError(err) {
+  return err && (
+    err.name === "QuotaExceededError" ||
+    err.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    err.code === 22 ||
+    err.code === 1014
+  );
+}
+
+// Persisting the cache must NEVER throw. GitHub is the source of truth;
+// this cache is only a local speed/offline layer. Previously an uncaught
+// QuotaExceededError here aborted saveCurrentNoteIfDirty *before* the
+// GitHub push, so a note could appear saved while actually being lost.
+// Now a failed persist is reported but never blocks the real save.
 function saveCache() {
-  localStorage.setItem(LS_CACHE, JSON.stringify(cache));
+  try {
+    localStorage.setItem(LS_CACHE, JSON.stringify(cache));
+    if (_cachePersistFailed) {
+      _cachePersistFailed = false;
+      updateCacheWarning();
+    }
+    return true;
+  } catch (err) {
+    // Deliberately leave the in-memory cache intact and complete, so the
+    // current session behaves normally. Only persistence is degraded; on
+    // next load the sync repopulates whatever didn't make it to disk.
+    if (isQuotaError(err)) {
+      if (!_cachePersistFailed) {
+        _cachePersistFailed = true;
+        updateCacheWarning();
+      }
+    } else {
+      console.error("Cache persist failed:", err);
+    }
+    return false;
+  }
+}
+
+function updateCacheWarning() {
+  const banner = document.getElementById("cache-warning");
+  if (!banner) return;
+  banner.hidden = !_cachePersistFailed;
 }
 
 // ---------- Setup screen ----------
@@ -265,7 +319,30 @@ function setOfflineBanner(isOffline) {
 
 // ---------- Frontmatter / parsing ----------
 
+// parseNote is called for every note on every render (both to build the
+// index rows and to collect the tag list), which at a few thousand notes
+// meant re-running the same regexes hundreds of thousands of times per
+// keystroke while searching. Content strings are immutable and change
+// only when a note is edited, so they make a safe cache key.
+const _parseCache = new Map();
+const PARSE_CACHE_MAX = 5000; // bounded so long editing sessions can't grow it forever
+
 function parseNote(content) {
+  let cached = _parseCache.get(content);
+  if (!cached) {
+    cached = parseNoteUncached(content);
+    if (_parseCache.size >= PARSE_CACHE_MAX) {
+      // Simple eviction: drop the oldest entry (Map preserves insertion order)
+      _parseCache.delete(_parseCache.keys().next().value);
+    }
+    _parseCache.set(content, cached);
+  }
+  // Return a defensive copy: toggleNoteTag mutates the returned object's
+  // `tags` and `modified`, which would otherwise corrupt the shared entry.
+  return { ...cached, tags: [...cached.tags] };
+}
+
+function parseNoteUncached(content) {
   let tags = [];
   let created = null;
   let modified = null;
@@ -310,7 +387,17 @@ function parseNote(content) {
     body = body.slice(titleMatch[0].length);
   }
 
-  return { tags, created, modified, title, body: body.replace(/^\n+/, "") };
+  const finalBody = body.replace(/^\n+/, "");
+  return {
+    tags,
+    created,
+    modified,
+    title,
+    body: finalBody,
+    // Cached alongside the parse since renderIndex needs it for every note
+    // on every render, and it allocates an array per call.
+    wc: (finalBody.match(/\S+/g) || []).length,
+  };
 }
 
 function serializeNote({ tags, created, modified, title, body }) {
@@ -477,10 +564,9 @@ function renderIndex() {
     const parsed = parseNote(note.content);
     return {
       path,
-      ...parsed,
+      ...parsed, // includes the precomputed `wc`
       raw: note.content,
       localModified: note.localModified || 0,
-      wc: wordCount(parsed.body),
     };
   });
 
@@ -1371,7 +1457,7 @@ function markdownToHtml(md) {
     if (placeholderMatch) {
       if (inList) { html += "</ul>"; inList = false; }
       const img = images[Number(placeholderMatch[1])];
-      html += `<img src="${img.src}" alt="${escapeHtml(img.alt)}" data-relpath="${img.src}">`;
+      html += `<img src="${escapeHtml(img.src)}" alt="${escapeHtml(img.alt)}" data-relpath="${escapeHtml(img.src)}">`;
       continue;
     }
     if (line.startsWith("- ")) {

@@ -430,6 +430,21 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible {
   z-index: 30;
 }
 
+.cache-warning {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--danger);
+  color: var(--paper-raised);
+  font-family: var(--sans);
+  font-size: 13px;
+  text-align: center;
+  padding: 10px;
+  z-index: 31;
+}
+.cache-warning[hidden] { display: none; }
+
 @media (max-width: 600px) {
   .note-title-input { font-size: 24px; padding: 18px 16px 0; }
   .note-meta, .tag-editor { padding-left: 16px; padding-right: 16px; }
